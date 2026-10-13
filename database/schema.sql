@@ -1,0 +1,182 @@
+-- CoinMC database schema (MySQL 5.7+/8.x, MariaDB 10.3+)
+SET NAMES utf8mb4;
+
+CREATE TABLE IF NOT EXISTS coins (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cg_id VARCHAR(120) NOT NULL,
+  slug VARCHAR(140) NOT NULL,
+  symbol VARCHAR(40) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  image VARCHAR(300) DEFAULT NULL,
+  rank_no INT UNSIGNED DEFAULT NULL,
+  price DECIMAL(30,12) DEFAULT NULL,
+  market_cap DECIMAL(30,2) DEFAULT NULL,
+  fdv DECIMAL(30,2) DEFAULT NULL,
+  volume_24h DECIMAL(30,2) DEFAULT NULL,
+  high_24h DECIMAL(30,12) DEFAULT NULL,
+  low_24h DECIMAL(30,12) DEFAULT NULL,
+  change_1h DECIMAL(12,4) DEFAULT NULL,
+  change_24h DECIMAL(12,4) DEFAULT NULL,
+  change_7d DECIMAL(12,4) DEFAULT NULL,
+  change_30d DECIMAL(12,4) DEFAULT NULL,
+  change_1y DECIMAL(14,4) DEFAULT NULL,
+  circulating_supply DECIMAL(36,4) DEFAULT NULL,
+  total_supply DECIMAL(36,4) DEFAULT NULL,
+  max_supply DECIMAL(36,4) DEFAULT NULL,
+  ath DECIMAL(30,12) DEFAULT NULL,
+  ath_change DECIMAL(12,4) DEFAULT NULL,
+  ath_date DATETIME DEFAULT NULL,
+  atl DECIMAL(30,12) DEFAULT NULL,
+  atl_change DECIMAL(16,4) DEFAULT NULL,
+  atl_date DATETIME DEFAULT NULL,
+  sparkline_7d MEDIUMTEXT DEFAULT NULL,
+  description MEDIUMTEXT DEFAULT NULL,
+  homepage VARCHAR(300) DEFAULT NULL,
+  whitepaper VARCHAR(300) DEFAULT NULL,
+  explorer VARCHAR(300) DEFAULT NULL,
+  twitter VARCHAR(120) DEFAULT NULL,
+  reddit VARCHAR(300) DEFAULT NULL,
+  github VARCHAR(300) DEFAULT NULL,
+  genesis_date DATE DEFAULT NULL,
+  hashing_algorithm VARCHAR(80) DEFAULT NULL,
+  platforms TEXT DEFAULT NULL,
+  price_source VARCHAR(40) DEFAULT 'coingecko',
+  exchange_symbol VARCHAR(40) DEFAULT NULL,
+  history_synced_at DATETIME DEFAULT NULL,
+  meta_updated_at DATETIME DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cg (cg_id),
+  UNIQUE KEY uq_slug (slug),
+  KEY k_symbol (symbol),
+  KEY k_rank (rank_no),
+  KEY k_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS coin_history_daily (
+  coin_id INT UNSIGNED NOT NULL,
+  d DATE NOT NULL,
+  open DECIMAL(30,12) DEFAULT NULL,
+  high DECIMAL(30,12) DEFAULT NULL,
+  low DECIMAL(30,12) DEFAULT NULL,
+  close DECIMAL(30,12) DEFAULT NULL,
+  volume DECIMAL(30,2) DEFAULT NULL,
+  market_cap DECIMAL(30,2) DEFAULT NULL,
+  source VARCHAR(20) DEFAULT NULL,
+  PRIMARY KEY (coin_id, d)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS coin_history_hourly (
+  coin_id INT UNSIGNED NOT NULL,
+  ts INT UNSIGNED NOT NULL,
+  price DECIMAL(30,12) NOT NULL,
+  volume DECIMAL(30,2) DEFAULT NULL,
+  PRIMARY KEY (coin_id, ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS categories (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cg_id VARCHAR(160) NOT NULL,
+  slug VARCHAR(160) NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  market_cap DECIMAL(30,2) DEFAULT NULL,
+  change_24h DECIMAL(12,4) DEFAULT NULL,
+  volume_24h DECIMAL(30,2) DEFAULT NULL,
+  top_images TEXT DEFAULT NULL,
+  content TEXT DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cg (cg_id),
+  UNIQUE KEY uq_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS coin_categories (
+  coin_id INT UNSIGNED NOT NULL,
+  category_id INT UNSIGNED NOT NULL,
+  PRIMARY KEY (coin_id, category_id),
+  KEY k_cat (category_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS exchanges (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cg_id VARCHAR(120) NOT NULL,
+  slug VARCHAR(140) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  image VARCHAR(300) DEFAULT NULL,
+  year_established SMALLINT DEFAULT NULL,
+  country VARCHAR(120) DEFAULT NULL,
+  url VARCHAR(300) DEFAULT NULL,
+  description TEXT DEFAULT NULL,
+  trust_score TINYINT DEFAULT NULL,
+  trust_rank INT DEFAULT NULL,
+  volume_24h_btc DECIMAL(30,4) DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cg (cg_id),
+  UNIQUE KEY uq_slug (slug),
+  KEY k_rank (trust_rank)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Spot markets pulled directly from exchange public APIs (Binance, Coinbase, Kraken, OKX, Bybit, KuCoin)
+CREATE TABLE IF NOT EXISTS markets (
+  exchange VARCHAR(40) NOT NULL,
+  pair VARCHAR(60) NOT NULL,
+  base VARCHAR(40) NOT NULL,
+  quote VARCHAR(40) NOT NULL,
+  price DECIMAL(30,12) DEFAULT NULL,
+  price_usd DECIMAL(30,12) DEFAULT NULL,
+  volume_base DECIMAL(36,8) DEFAULT NULL,
+  volume_usd DECIMAL(30,2) DEFAULT NULL,
+  change_24h DECIMAL(12,4) DEFAULT NULL,
+  trade_url VARCHAR(300) DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (exchange, pair),
+  KEY k_base (base),
+  KEY k_vol (volume_usd)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS global_stats (
+  id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  total_market_cap DECIMAL(30,2) DEFAULT NULL,
+  total_volume DECIMAL(30,2) DEFAULT NULL,
+  mcap_change_24h DECIMAL(12,4) DEFAULT NULL,
+  btc_dominance DECIMAL(8,4) DEFAULT NULL,
+  eth_dominance DECIMAL(8,4) DEFAULT NULL,
+  active_coins INT DEFAULT NULL,
+  markets INT DEFAULT NULL,
+  exchanges INT DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS global_history (
+  d DATE NOT NULL,
+  total_market_cap DECIMAL(30,2) DEFAULT NULL,
+  total_volume DECIMAL(30,2) DEFAULT NULL,
+  btc_dominance DECIMAL(8,4) DEFAULT NULL,
+  PRIMARY KEY (d)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS trending (
+  position TINYINT UNSIGNED NOT NULL,
+  coin_cg_id VARCHAR(120) NOT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (position)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS fiat_rates (
+  code VARCHAR(10) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  sign VARCHAR(10) DEFAULT NULL,
+  rate_usd DECIMAL(24,10) NOT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS kv (
+  k VARCHAR(80) NOT NULL,
+  v TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (k)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

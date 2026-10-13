@@ -1,0 +1,6 @@
+storage/cache/*
+storage/logs/*
+!storage/cache/.gitkeep
+!storage/logs/.gitkeep
+app/config.local.php
+.DS_Store

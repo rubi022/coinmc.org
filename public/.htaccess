@@ -1,0 +1,25 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Force HTTPS + non-www (uncomment in production)
+  # RewriteCond %{HTTPS} off [OR]
+  # RewriteCond %{HTTP_HOST} ^www\. [NC]
+  # RewriteRule ^ https://coinmc.org%{REQUEST_URI} [L,R=301]
+
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml application/xml text/xml text/csv
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 30 days"
+  ExpiresByType application/javascript "access plus 30 days"
+  ExpiresByType image/svg+xml "access plus 30 days"
+  ExpiresByType image/png "access plus 30 days"
+</IfModule>
