@@ -1,6 +1,6 @@
 # coinmc.org
 
-A cryptocurrency market data platform for tracking coin prices, market caps, trading volume and market trends — built in plain PHP + MySQL, modeled on CoinMarketCap / CoinGecko and engineered for SEO traffic.
+A cryptocurrency market data platform for tracking coin prices, market caps, trading volume and market trends — built in plain PHP + MySQL, modeled on CoinMarketCap / CoinGecko.
 
 ## Quick start (macOS, local)
 
