@@ -1,6 +1,10 @@
 <?php
 
-const COIN_LIST_COLS = 'id, cg_id, slug, symbol, name, image, rank_no, price, market_cap, volume_24h, change_1h, change_24h, change_7d, circulating_supply, max_supply, sparkline_7d, created_at';
+/** Public visibility: only active, non-scam coins appear in lists, search, sitemaps and converters. */
+const COIN_OK = "status = 'active' AND risk_flag <> 'scam'";
+const COIN_OK_C = "c.status = 'active' AND c.risk_flag <> 'scam'";
+
+const COIN_LIST_COLS = 'id, cg_id, slug, symbol, name, image, verified, risk_flag, rank_no, price, market_cap, volume_24h, change_1h, change_24h, change_7d, circulating_supply, max_supply, sparkline_7d, created_at';
 
 function global_stats(): array
 {
@@ -9,7 +13,7 @@ function global_stats(): array
     $g = row('SELECT * FROM global_stats WHERE id = 1') ?: [];
     if (empty($g['total_market_cap'])) {
         // Fallback: derive from tracked coins
-        $agg = row('SELECT SUM(market_cap) mc, SUM(volume_24h) vol, COUNT(*) n FROM coins WHERE market_cap > 0');
+        $agg = row('SELECT SUM(market_cap) mc, SUM(volume_24h) vol, COUNT(*) n FROM coins WHERE market_cap > 0 AND ' . COIN_OK);
         $btc = (float)val("SELECT market_cap FROM coins WHERE cg_id='bitcoin'");
         $eth = (float)val("SELECT market_cap FROM coins WHERE cg_id='ethereum'");
         $mc = (float)($agg['mc'] ?? 0);
@@ -27,23 +31,36 @@ function global_stats(): array
 function coins_page(int $page, int $per, string $order = 'rank_no IS NULL, rank_no ASC'): array
 {
     $off = ($page - 1) * $per;
-    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE price IS NOT NULL ORDER BY $order LIMIT $per OFFSET $off");
+    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE price IS NOT NULL AND " . COIN_OK . " ORDER BY $order LIMIT $per OFFSET $off");
 }
 
-function coins_count(): int { return (int)val('SELECT COUNT(*) FROM coins WHERE price IS NOT NULL'); }
+function coins_count(): int { return (int)val('SELECT COUNT(*) FROM coins WHERE price IS NOT NULL AND ' . COIN_OK); }
 
-function coin_by_slug(string $slug): ?array { return row('SELECT * FROM coins WHERE slug = ?', [$slug]); }
+/** Public lookup: honours admin status. Delisted → 410, merged → 301 to target, hidden/pending → 404. Scam-flagged coins stay reachable (with warning + noindex). */
+function coin_by_slug(string $slug): ?array
+{
+    $c = row('SELECT * FROM coins WHERE slug = ?', [$slug]);
+    if (!$c) return null;
+    if (!empty($c['merged_into'])) {
+        $t = row('SELECT slug FROM coins WHERE id = ? AND status = \'active\'', [$c['merged_into']]);
+        if ($t && PHP_SAPI !== 'cli' && !headers_sent()) { header('Location: ' . path_norm('/currencies/' . $t['slug']), true, 301); exit; }
+    }
+    $st = $c['status'] ?? 'active';
+    if ($st === 'delisted') { $GLOBALS['__gone'] = true; return null; }
+    if ($st !== 'active') return null;
+    return $c;
+}
 
 function coin_by_symbol(string $sym): ?array
 {
-    return row('SELECT * FROM coins WHERE symbol = ? AND price IS NOT NULL ORDER BY rank_no IS NULL, rank_no LIMIT 1', [strtolower($sym)]);
+    return row('SELECT * FROM coins WHERE symbol = ? AND price IS NOT NULL AND ' . COIN_OK . ' ORDER BY rank_no IS NULL, rank_no LIMIT 1', [strtolower($sym)]);
 }
 
 function trending_coins(int $n = 7): array
 {
-    $r = rows("SELECT " . COIN_LIST_COLS . " FROM trending t JOIN coins c ON c.cg_id = t.coin_cg_id ORDER BY t.position LIMIT $n");
+    $r = rows("SELECT " . COIN_LIST_COLS . " FROM trending t JOIN coins c ON c.cg_id = t.coin_cg_id WHERE " . COIN_OK_C . " ORDER BY t.position LIMIT $n");
     if (!$r) { // fallback: biggest 24h volume/mcap ratio among top 300
-        $r = rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE rank_no <= 300 AND market_cap > 0 ORDER BY volume_24h / market_cap DESC LIMIT $n");
+        $r = rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE rank_no <= 300 AND market_cap > 0 AND " . COIN_OK . " ORDER BY volume_24h / market_cap DESC LIMIT $n");
     }
     return $r;
 }
@@ -52,12 +69,12 @@ function movers(string $dir = 'up', int $n = 30, int $minVol = 50000, string $fi
 {
     $ord = $dir === 'up' ? 'DESC' : 'ASC';
     $field = in_array($field, ['change_1h', 'change_24h', 'change_7d', 'change_30d'], true) ? $field : 'change_24h';
-    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE $field IS NOT NULL AND volume_24h >= ? AND rank_no <= 1000 ORDER BY $field $ord LIMIT $n", [$minVol]);
+    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE $field IS NOT NULL AND volume_24h >= ? AND rank_no <= 1000 AND " . COIN_OK . " ORDER BY $field $ord LIMIT $n", [$minVol]);
 }
 
 function recently_added(int $n = 30): array
 {
-    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE price IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT $n");
+    return rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE price IS NOT NULL AND " . COIN_OK . " ORDER BY created_at DESC, id DESC LIMIT $n");
 }
 
 function coin_markets(array $coin, int $limit = 30): array
@@ -73,11 +90,11 @@ function coin_categories(int $coinId): array
 function related_coins(array $coin, int $n = 8): array
 {
     $r = rows("SELECT " . COIN_LIST_COLS . " FROM coins c JOIN coin_categories cc ON cc.coin_id = c.id
-              WHERE cc.category_id IN (SELECT category_id FROM coin_categories WHERE coin_id = ?) AND c.id <> ? AND c.price IS NOT NULL
+              WHERE cc.category_id IN (SELECT category_id FROM coin_categories WHERE coin_id = ?) AND c.id <> ? AND c.price IS NOT NULL AND " . COIN_OK_C . "
               GROUP BY c.id ORDER BY c.rank_no IS NULL, c.rank_no LIMIT $n", [$coin['id'], $coin['id']]);
     if (count($r) < $n) {
         $rank = (int)($coin['rank_no'] ?: 50);
-        $more = rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE id <> ? AND rank_no BETWEEN ? AND ? ORDER BY rank_no LIMIT $n", [$coin['id'], max(1, $rank - 5), $rank + 10]);
+        $more = rows("SELECT " . COIN_LIST_COLS . " FROM coins WHERE id <> ? AND rank_no BETWEEN ? AND ? AND " . COIN_OK . " ORDER BY rank_no LIMIT $n", [$coin['id'], max(1, $rank - 5), $rank + 10]);
         $ids = array_column($r, 'id');
         foreach ($more as $m) if (!in_array($m['id'], $ids) && count($r) < $n) $r[] = $m;
     }

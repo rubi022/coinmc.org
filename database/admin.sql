@@ -1,0 +1,405 @@
+-- Admin panel, accounts, analytics, ads, CMS tables (idempotent: CREATE TABLE IF NOT EXISTS)
+SET NAMES utf8mb4;
+
+CREATE TABLE IF NOT EXISTS users (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  email VARCHAR(190) NOT NULL,
+  name VARCHAR(120) DEFAULT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  role VARCHAR(30) NOT NULL DEFAULT 'user',
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  email_verified_at DATETIME DEFAULT NULL,
+  totp_secret VARCHAR(255) DEFAULT NULL,
+  totp_enabled TINYINT NOT NULL DEFAULT 0,
+  newsletter TINYINT NOT NULL DEFAULT 0,
+  country CHAR(2) DEFAULT NULL,
+  last_login_at DATETIME DEFAULT NULL,
+  last_login_ip VARCHAR(45) DEFAULT NULL,
+  deletion_requested_at DATETIME DEFAULT NULL,
+  sessions_valid_after DATETIME DEFAULT NULL,
+  admin_notes TEXT DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_email (email),
+  KEY k_role (role),
+  KEY k_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_tokens (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  type VARCHAR(20) NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_hash (token_hash),
+  KEY k_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS login_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED DEFAULT NULL,
+  email VARCHAR(190) DEFAULT NULL,
+  ip VARCHAR(45) DEFAULT NULL,
+  user_agent VARCHAR(255) DEFAULT NULL,
+  success TINYINT NOT NULL DEFAULT 0,
+  reason VARCHAR(40) DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY k_ip (ip, created_at),
+  KEY k_email (email, created_at),
+  KEY k_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_watchlist (
+  user_id INT UNSIGNED NOT NULL,
+  coin_id INT UNSIGNED NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, coin_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED DEFAULT NULL,
+  actor VARCHAR(190) DEFAULT NULL,
+  action VARCHAR(60) NOT NULL,
+  entity VARCHAR(40) DEFAULT NULL,
+  entity_id VARCHAR(60) DEFAULT NULL,
+  before_json MEDIUMTEXT DEFAULT NULL,
+  after_json MEDIUMTEXT DEFAULT NULL,
+  ip VARCHAR(45) DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY k_entity (entity, entity_id),
+  KEY k_action (action),
+  KEY k_user (user_id),
+  KEY k_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS alerts (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  severity VARCHAR(10) NOT NULL DEFAULT 'warning',
+  type VARCHAR(40) NOT NULL,
+  dedupe_key VARCHAR(120) NOT NULL DEFAULT '',
+  message TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME DEFAULT NULL,
+  resolved_at DATETIME DEFAULT NULL,
+  acked_by INT UNSIGNED DEFAULT NULL,
+  notified TINYINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY k_open (resolved_at, severity),
+  KEY k_type (type, dedupe_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS api_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ts DATETIME NOT NULL,
+  host VARCHAR(80) NOT NULL,
+  ok TINYINT NOT NULL,
+  status SMALLINT DEFAULT NULL,
+  ms INT DEFAULT NULL,
+  err VARCHAR(160) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY k_host_ts (host, ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS coin_overrides (
+  coin_id INT UNSIGNED NOT NULL,
+  field VARCHAR(40) NOT NULL,
+  value TEXT,
+  set_by INT UNSIGNED DEFAULT NULL,
+  set_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (coin_id, field)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- analytics
+CREATE TABLE IF NOT EXISTS pageviews (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ts DATETIME NOT NULL,
+  day DATE NOT NULL,
+  path VARCHAR(190) NOT NULL,
+  ptype VARCHAR(16) DEFAULT NULL,
+  status SMALLINT DEFAULT 200,
+  vh CHAR(16) DEFAULT NULL,
+  sid CHAR(16) DEFAULT NULL,
+  landing TINYINT NOT NULL DEFAULT 0,
+  is_new TINYINT NOT NULL DEFAULT 0,
+  ref_host VARCHAR(120) DEFAULT NULL,
+  src VARCHAR(12) DEFAULT NULL,
+  utm_source VARCHAR(80) DEFAULT NULL,
+  utm_medium VARCHAR(80) DEFAULT NULL,
+  utm_campaign VARCHAR(80) DEFAULT NULL,
+  country CHAR(2) DEFAULT NULL,
+  device VARCHAR(8) DEFAULT NULL,
+  browser VARCHAR(20) DEFAULT NULL,
+  os VARCHAR(20) DEFAULT NULL,
+  is_bot TINYINT NOT NULL DEFAULT 0,
+  bot_name VARCHAR(30) DEFAULT NULL,
+  ms INT DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY k_day_bot (day, is_bot),
+  KEY k_ts (ts),
+  KEY k_sid (sid),
+  KEY k_path (day, path(100)),
+  KEY k_status (status, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS visitors (
+  vh CHAR(16) NOT NULL,
+  sid CHAR(16) NOT NULL,
+  first_day DATE NOT NULL,
+  last_ts INT UNSIGNED NOT NULL,
+  PRIMARY KEY (vh),
+  KEY k_last (last_ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS traffic_daily (
+  day DATE NOT NULL,
+  views INT NOT NULL DEFAULT 0,
+  visitors INT NOT NULL DEFAULT 0,
+  sessions INT NOT NULL DEFAULT 0,
+  bounces INT NOT NULL DEFAULT 0,
+  duration_sum BIGINT NOT NULL DEFAULT 0,
+  new_visitors INT NOT NULL DEFAULT 0,
+  bot_views INT NOT NULL DEFAULT 0,
+  googlebot INT NOT NULL DEFAULT 0,
+  organic_sessions INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cwv (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ts DATETIME NOT NULL,
+  path VARCHAR(190) NOT NULL,
+  ptype VARCHAR(16) DEFAULT NULL,
+  metric VARCHAR(6) NOT NULL,
+  value DOUBLE NOT NULL,
+  device VARCHAR(8) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY k_metric (metric, ts),
+  KEY k_ptype (ptype, metric)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- Google integrations
+CREATE TABLE IF NOT EXISTS gsc_totals (
+  day DATE NOT NULL, clicks INT NOT NULL DEFAULT 0, impressions INT NOT NULL DEFAULT 0, ctr FLOAT DEFAULT NULL, position FLOAT DEFAULT NULL,
+  PRIMARY KEY (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS gsc_queries (
+  day DATE NOT NULL, query VARCHAR(160) NOT NULL, clicks INT NOT NULL DEFAULT 0, impressions INT NOT NULL DEFAULT 0, position FLOAT DEFAULT NULL,
+  PRIMARY KEY (day, query), KEY k_query (query)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS gsc_pages (
+  day DATE NOT NULL, page VARCHAR(200) NOT NULL, clicks INT NOT NULL DEFAULT 0, impressions INT NOT NULL DEFAULT 0, position FLOAT DEFAULT NULL,
+  PRIMARY KEY (day, page)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS gsc_countries (
+  day DATE NOT NULL, country CHAR(3) NOT NULL, clicks INT NOT NULL DEFAULT 0, impressions INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, country)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ga_daily (
+  day DATE NOT NULL, users INT DEFAULT 0, sessions INT DEFAULT 0, pageviews INT DEFAULT 0, engaged_sessions INT DEFAULT 0,
+  PRIMARY KEY (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------- SEO
+CREATE TABLE IF NOT EXISTS seo_meta (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  path VARCHAR(190) NOT NULL,
+  title VARCHAR(200) DEFAULT NULL,
+  description VARCHAR(400) DEFAULT NULL,
+  robots VARCHAR(40) DEFAULT NULL,
+  canonical VARCHAR(300) DEFAULT NULL,
+  og_image VARCHAR(300) DEFAULT NULL,
+  extra_schema MEDIUMTEXT DEFAULT NULL,
+  updated_by INT UNSIGNED DEFAULT NULL,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_path (path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS redirects (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  source VARCHAR(190) NOT NULL,
+  target VARCHAR(400) NOT NULL,
+  code SMALLINT NOT NULL DEFAULT 301,
+  hits INT NOT NULL DEFAULT 0,
+  enabled TINYINT NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS seo_keywords (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  keyword VARCHAR(160) NOT NULL,
+  target_url VARCHAR(190) DEFAULT NULL,
+  notes VARCHAR(300) DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kw (keyword)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- ads & affiliates
+CREATE TABLE IF NOT EXISTS ad_advertisers (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(160) NOT NULL,
+  contact_email VARCHAR(190) DEFAULT NULL,
+  website VARCHAR(300) DEFAULT NULL,
+  verified TINYINT NOT NULL DEFAULT 0,
+  status VARCHAR(12) NOT NULL DEFAULT 'active',
+  notes TEXT DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ad_campaigns (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  advertiser_id INT UNSIGNED DEFAULT NULL,
+  name VARCHAR(160) NOT NULL,
+  placement VARCHAR(30) NOT NULL,
+  kind VARCHAR(16) NOT NULL DEFAULT 'banner',
+  title VARCHAR(160) DEFAULT NULL,
+  body VARCHAR(300) DEFAULT NULL,
+  image_url VARCHAR(400) DEFAULT NULL,
+  target_url VARCHAR(500) NOT NULL,
+  cta VARCHAR(40) DEFAULT NULL,
+  pricing VARCHAR(8) NOT NULL DEFAULT 'flat',
+  rate DECIMAL(12,4) NOT NULL DEFAULT 0,
+  budget DECIMAL(14,2) NOT NULL DEFAULT 0,
+  spent DECIMAL(14,6) NOT NULL DEFAULT 0,
+  start_at DATETIME DEFAULT NULL,
+  end_at DATETIME DEFAULT NULL,
+  devices VARCHAR(30) DEFAULT NULL,
+  countries VARCHAR(200) DEFAULT NULL,
+  freq_cap SMALLINT NOT NULL DEFAULT 0,
+  priority TINYINT NOT NULL DEFAULT 5,
+  coin_id INT UNSIGNED DEFAULT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'draft',
+  reject_reason VARCHAR(300) DEFAULT NULL,
+  created_by INT UNSIGNED DEFAULT NULL,
+  approved_by INT UNSIGNED DEFAULT NULL,
+  approved_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY k_active (status, placement)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ad_stats (
+  campaign_id INT UNSIGNED NOT NULL,
+  day DATE NOT NULL,
+  placement VARCHAR(30) NOT NULL DEFAULT '',
+  impressions INT NOT NULL DEFAULT 0,
+  clicks INT NOT NULL DEFAULT 0,
+  invalid_clicks INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (campaign_id, day, placement)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ad_freq (
+  vh CHAR(16) NOT NULL,
+  campaign_id INT UNSIGNED NOT NULL,
+  day DATE NOT NULL,
+  n SMALLINT NOT NULL DEFAULT 0,
+  clicks SMALLINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (vh, campaign_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS slot_impressions (
+  day DATE NOT NULL,
+  placement VARCHAR(30) NOT NULL,
+  requests INT NOT NULL DEFAULT 0,
+  filled INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, placement)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS affiliate_links (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  slug VARCHAR(80) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  partner VARCHAR(120) DEFAULT NULL,
+  target_url VARCHAR(600) NOT NULL,
+  commission_note VARCHAR(200) DEFAULT NULL,
+  enabled TINYINT NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS affiliate_clicks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  link_id INT UNSIGNED NOT NULL,
+  ts DATETIME NOT NULL,
+  day DATE NOT NULL,
+  from_path VARCHAR(190) DEFAULT NULL,
+  country CHAR(2) DEFAULT NULL,
+  device VARCHAR(8) DEFAULT NULL,
+  vh CHAR(16) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY k_link_day (link_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS affiliate_conversions (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  link_id INT UNSIGNED NOT NULL,
+  day DATE NOT NULL,
+  conversions INT NOT NULL DEFAULT 1,
+  commission DECIMAL(14,2) NOT NULL DEFAULT 0,
+  note VARCHAR(200) DEFAULT NULL,
+  created_by INT UNSIGNED DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY k_link (link_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ledger (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  day DATE NOT NULL,
+  type VARCHAR(8) NOT NULL,
+  category VARCHAR(30) NOT NULL,
+  partner VARCHAR(120) DEFAULT NULL,
+  amount DECIMAL(14,2) NOT NULL,
+  note VARCHAR(300) DEFAULT NULL,
+  created_by INT UNSIGNED DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY k_day (day),
+  KEY k_cat (type, category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- CMS
+CREATE TABLE IF NOT EXISTS articles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  slug VARCHAR(160) NOT NULL,
+  title VARCHAR(220) NOT NULL,
+  excerpt VARCHAR(400) DEFAULT NULL,
+  body MEDIUMTEXT,
+  category VARCHAR(60) DEFAULT NULL,
+  tags VARCHAR(200) DEFAULT NULL,
+  image_url VARCHAR(400) DEFAULT NULL,
+  author_id INT UNSIGNED DEFAULT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'draft',
+  publish_at DATETIME DEFAULT NULL,
+  meta_title VARCHAR(200) DEFAULT NULL,
+  meta_description VARCHAR(400) DEFAULT NULL,
+  sponsored TINYINT NOT NULL DEFAULT 0,
+  sponsor_name VARCHAR(120) DEFAULT NULL,
+  views INT NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_slug (slug),
+  KEY k_pub (status, publish_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS article_revisions (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  article_id INT UNSIGNED NOT NULL,
+  title VARCHAR(220) DEFAULT NULL,
+  body MEDIUMTEXT,
+  editor_id INT UNSIGNED DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY k_article (article_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

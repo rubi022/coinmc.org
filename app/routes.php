@@ -1,5 +1,7 @@
 <?php
 require_once APP_DIR . '/sources/Exchanges.php';
+require_once APP_DIR . '/account.php';
+require_once APP_DIR . '/news.php';
 
 function dispatch(string $path): void
 {
@@ -21,7 +23,13 @@ function dispatch(string $path): void
         '~^/charts/$~'                                            => 'ctl_charts',
         '~^/watchlist/$~'                                         => 'ctl_watchlist',
         '~^/search/$~'                                            => 'ctl_search',
-        '~^/(about|methodology|privacy|terms|disclaimer)/$~'      => 'ctl_static',
+        '~^/(about|methodology|privacy|terms|disclaimer|advertising-disclosure)/$~' => 'ctl_static',
+        '~^/login/$~' => 'ctl_login', '~^/login/2fa/$~' => 'ctl_login_2fa', '~^/register/$~' => 'ctl_register', '~^/logout/$~' => 'ctl_logout',
+        '~^/verify/$~' => 'ctl_verify', '~^/forgot/$~' => 'ctl_forgot', '~^/reset/$~' => 'ctl_reset',
+        '~^/account/$~' => 'ctl_account', '~^/account/security/$~' => 'ctl_account_security', '~^/account/export/$~' => 'ctl_account_export',
+        '~^/news/$~' => 'ctl_news', '~^/news/([a-z0-9-]+)/$~' => 'ctl_article',
+        '~^/go/ad/(\d+)/$~' => 'ctl_go_ad', '~^/go/([a-z0-9-]+)/$~' => 'ctl_go_aff',
+        '~^/api/me/?$~' => 'api_me', '~^/api/watchlist/?$~' => 'api_watchlist', '~^/api/ad/?$~' => 'api_ad', '~^/api/vitals/?$~' => 'api_vitals',
         '~^/api/chart/?$~'                                        => 'api_chart',
         '~^/api/search/?$~'                                       => 'api_search',
         '~^/api/coins/?$~'                                        => 'api_coins',
@@ -102,6 +110,7 @@ function ctl_coin(string $slug): void
         'og_image' => $c['image'] ? str_replace('/small/', '/large/', $c['image']) : null,
         'ld' => [ld_coin($c), ld_breadcrumbs(['Cryptocurrencies' => '/', $n => coin_url($c)]), ld_faq($faq)],
         'charts' => true,
+        'robots' => $c['risk_flag'] === 'scam' ? 'noindex,follow' : null,
     ]);
 }
 
@@ -215,7 +224,7 @@ function ctl_category(string $slug): void
 {
     $cat = row('SELECT * FROM categories WHERE slug = ?', [$slug]);
     if (!$cat) { not_found(); return; }
-    $coins = rows('SELECT ' . COIN_LIST_COLS . ' FROM coins c JOIN coin_categories cc ON cc.coin_id = c.id WHERE cc.category_id = ? AND c.price IS NOT NULL ORDER BY c.rank_no IS NULL, c.rank_no LIMIT 300', [$cat['id']]);
+    $coins = rows('SELECT ' . COIN_LIST_COLS . ' FROM coins c JOIN coin_categories cc ON cc.coin_id = c.id WHERE cc.category_id = ? AND c.price IS NOT NULL AND ' . COIN_OK_C . ' ORDER BY c.rank_no IS NULL, c.rank_no LIMIT 300', [$cat['id']]);
     $site = cfg('site_name');
     echo page('category', ['cat' => $cat, 'coins' => $coins], [
         'title' => "Top {$cat['name']} Coins by Market Cap | $site",
@@ -229,7 +238,7 @@ function ctl_category(string $slug): void
 // ============================================================ EXCHANGES
 function ctl_exchanges(): void
 {
-    $list = rows('SELECT * FROM exchanges ORDER BY trust_rank IS NULL, trust_rank LIMIT 250');
+    $list = rows("SELECT * FROM exchanges WHERE status = 'active' ORDER BY trust_rank IS NULL, trust_rank LIMIT 250");
     $btc = (float)val("SELECT price FROM coins WHERE cg_id='bitcoin'");
     echo page('exchanges', ['list' => $list, 'btc' => $btc], [
         'title' => 'Top Cryptocurrency Spot Exchanges Ranked by Trust Score | ' . cfg('site_name'),
@@ -241,7 +250,7 @@ function ctl_exchanges(): void
 
 function ctl_exchange(string $slug): void
 {
-    $x = row('SELECT * FROM exchanges WHERE slug = ?', [$slug]);
+    $x = row("SELECT * FROM exchanges WHERE slug = ? AND status = 'active'", [$slug]);
     if (!$x) { not_found(); return; }
     $key = array_search($x['cg_id'], Exchanges::CG_IDS, true);
     $markets = $key ? rows('SELECT m.*, c.slug coin_slug, c.name coin_name, c.image FROM markets m LEFT JOIN coins c ON c.id = (SELECT id FROM coins WHERE symbol = LOWER(m.base) ORDER BY rank_no IS NULL, rank_no LIMIT 1)
@@ -317,13 +326,13 @@ function ctl_search(): void
 function search_coins(string $qq, int $n = 10): array
 {
     $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $qq) . '%';
-    return rows('SELECT ' . COIN_LIST_COLS . ' FROM coins WHERE price IS NOT NULL AND (name LIKE ? OR symbol LIKE ?)
+    return rows('SELECT ' . COIN_LIST_COLS . ' FROM coins WHERE price IS NOT NULL AND ' . COIN_OK . ' AND (name LIKE ? OR symbol LIKE ?)
                  ORDER BY (symbol = ?) DESC, (name = ?) DESC, rank_no IS NULL, rank_no LIMIT ' . (int)$n, [$like, $like, strtolower($qq), $qq]);
 }
 
 function ctl_static(string $p): void
 {
-    $titles = ['about' => 'About ' . cfg('site_name'), 'methodology' => 'Methodology & Data Sources', 'privacy' => 'Privacy Policy', 'terms' => 'Terms of Use', 'disclaimer' => 'Disclaimer'];
+    $titles = ['about' => 'About ' . cfg('site_name'), 'methodology' => 'Methodology & Data Sources', 'privacy' => 'Privacy Policy', 'terms' => 'Terms of Use', 'disclaimer' => 'Disclaimer', 'advertising-disclosure' => 'Advertising & Sponsored Content Disclosure'];
     echo page('static', ['p' => $p, 'h1' => $titles[$p]], [
         'title' => $titles[$p] . ' | ' . cfg('site_name'),
         'description' => $p === 'methodology' ? 'How ' . cfg('site_name') . ' calculates prices, market caps and volumes from direct exchange data.' : $titles[$p] . ' for ' . cfg('site_name') . '.',
@@ -378,7 +387,7 @@ function api_coins(): void
     $ids = array_slice(array_filter(array_map('trim', explode(',', (string)($_GET['ids'] ?? '')))), 0, 200);
     if (!$ids) { json_out([]); return; }
     $ph = implode(',', array_fill(0, count($ids), '?'));
-    $list = rows('SELECT ' . COIN_LIST_COLS . " FROM coins WHERE slug IN ($ph) ORDER BY rank_no IS NULL, rank_no", $ids);
+    $list = rows('SELECT ' . COIN_LIST_COLS . " FROM coins WHERE slug IN ($ph) AND " . COIN_OK . " ORDER BY rank_no IS NULL, rank_no", $ids);
     json_out(['html' => render('partials/coin_table', ['coins' => $list, 'offset' => 0])], 30);
 }
 
@@ -386,7 +395,25 @@ function api_coins(): void
 function ctl_robots(): void
 {
     header('Content-Type: text/plain; charset=utf-8');
-    echo "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /search/\nDisallow: /watchlist/\nDisallow: /*.csv$\n\nSitemap: " . abs_url('/sitemap.xml') . "\n";
+    $custom = trim((string)setting('robots_txt', ''));
+    if ($custom !== '') { echo $custom, "
+"; if (stripos($custom, 'sitemap:') === false) echo "
+Sitemap: " . abs_url('/sitemap.xml') . "
+"; return; }
+    echo "User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /search/
+Disallow: /watchlist/
+Disallow: /admin/
+Disallow: /go/
+Disallow: /account/
+Disallow: /login/
+Disallow: /register/
+Disallow: /*.csv$
+
+Sitemap: " . abs_url('/sitemap.xml') . "
+";
 }
 
 const SITEMAP_CHUNK = 5000;
@@ -398,22 +425,22 @@ function sitemap_urls(string $type, int $n): array
     switch ($type) {
         case 'pages':
             $now = gmdate('c');
-            foreach (['/', '/categories/', '/exchanges/', '/gainers-losers/', '/trending/', '/new/', '/charts/', '/convert/', '/about/', '/methodology/'] as $p) $u[] = [$p, $now, 'hourly', '1.0'];
+            foreach (['/', '/categories/', '/exchanges/', '/gainers-losers/', '/trending/', '/new/', '/charts/', '/convert/', '/about/', '/methodology/', '/news/'] as $p) $u[] = [$p, $now, 'hourly', '1.0'];
             $pages = (int)ceil(coins_count() / cfg('per_page', 100));
             for ($i = 2; $i <= $pages; $i++) $u[] = ["/?page=$i", $now, 'hourly', '0.6'];
             break;
         case 'coins':
-            foreach (rows("SELECT slug, updated_at FROM coins WHERE price IS NOT NULL ORDER BY rank_no IS NULL, rank_no LIMIT $lim OFFSET $off") as $r)
+            foreach (rows("SELECT slug, updated_at FROM coins WHERE price IS NOT NULL AND " . COIN_OK . " ORDER BY rank_no IS NULL, rank_no LIMIT $lim OFFSET $off") as $r)
                 $u[] = ['/currencies/' . $r['slug'] . '/', gmdate('c', strtotime($r['updated_at'] . ' UTC')), 'hourly', '0.9'];
             break;
         case 'history':
-            foreach (rows("SELECT c.slug, c.id, MAX(h.d) last FROM coins c JOIN coin_history_daily h ON h.coin_id = c.id WHERE c.price IS NOT NULL GROUP BY c.id ORDER BY c.rank_no IS NULL, c.rank_no LIMIT 2000 OFFSET " . (($n - 1) * 2000)) as $r) {
+            foreach (rows("SELECT c.slug, c.id, MAX(h.d) last FROM coins c JOIN coin_history_daily h ON h.coin_id = c.id WHERE c.price IS NOT NULL AND " . COIN_OK_C . " GROUP BY c.id ORDER BY c.rank_no IS NULL, c.rank_no LIMIT 2000 OFFSET " . (($n - 1) * 2000)) as $r) {
                 $u[] = ['/currencies/' . $r['slug'] . '/historical-data/', $r['last'], 'daily', '0.7'];
                 foreach (history_years((int)$r['id']) as $y) $u[] = ['/currencies/' . $r['slug'] . "/historical-data/$y/", $y == date('Y') ? $r['last'] : "$y-12-31", $y == date('Y') ? 'daily' : 'monthly', '0.5'];
             }
             break;
         case 'convert':
-            $coins = rows('SELECT symbol FROM coins WHERE price IS NOT NULL AND rank_no IS NOT NULL ORDER BY rank_no LIMIT 300');
+            $coins = rows('SELECT symbol FROM coins WHERE price IS NOT NULL AND rank_no IS NOT NULL AND ' . COIN_OK . ' ORDER BY rank_no LIMIT 300');
             $fi = array_intersect(top_fiats(), array_keys(fiats()));
             $all = [];
             $seen = [];
@@ -430,8 +457,12 @@ function sitemap_urls(string $type, int $n): array
         case 'categories':
             foreach (rows('SELECT slug, updated_at FROM categories WHERE market_cap > 0 ORDER BY market_cap DESC') as $r) $u[] = ['/categories/' . $r['slug'] . '/', gmdate('c', strtotime($r['updated_at'] . ' UTC')), 'daily', '0.6'];
             break;
+        case 'news':
+            foreach (rows('SELECT slug, COALESCE(updated_at, publish_at, created_at) m FROM articles WHERE ' . ARTICLE_LIVE . ' ORDER BY m DESC LIMIT ' . $lim . ' OFFSET ' . $off) as $r)
+                $u[] = ['/news/' . $r['slug'] . '/', gmdate('c', strtotime($r['m'] . ' UTC')), 'weekly', '0.7'];
+            break;
         case 'exchanges':
-            foreach (rows('SELECT slug, updated_at FROM exchanges ORDER BY trust_rank') as $r) $u[] = ['/exchanges/' . $r['slug'] . '/', gmdate('c', strtotime($r['updated_at'] . ' UTC')), 'daily', '0.6'];
+            foreach (rows("SELECT slug, updated_at FROM exchanges WHERE status = 'active' ORDER BY trust_rank") as $r) $u[] = ['/exchanges/' . $r['slug'] . '/', gmdate('c', strtotime($r['updated_at'] . ' UTC')), 'daily', '0.6'];
             break;
     }
     return $u;
@@ -443,7 +474,8 @@ function sitemap_counts(): array
     $conv = min(300, (int)val('SELECT COUNT(*) FROM coins WHERE rank_no IS NOT NULL')) * (count(top_fiats()) + 10) + 60;
     $hist = (int)val('SELECT COUNT(DISTINCT coin_id) FROM coin_history_daily');
     return ['pages' => 1, 'coins' => max(1, (int)ceil($coins / SITEMAP_CHUNK)), 'history' => max(1, (int)ceil($hist / 2000)),
-            'convert' => max(1, (int)ceil($conv / SITEMAP_CHUNK)), 'categories' => 1, 'exchanges' => 1];
+            'convert' => max(1, (int)ceil($conv / SITEMAP_CHUNK)), 'categories' => 1, 'exchanges' => 1,
+            'news' => max(1, (int)ceil((int)val('SELECT COUNT(*) FROM articles WHERE ' . ARTICLE_LIVE) / SITEMAP_CHUNK))];
 }
 
 function ctl_sitemap_index(): void

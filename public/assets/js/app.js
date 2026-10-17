@@ -54,6 +54,13 @@
   });
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
+  // ---- account state (cache-safe: the HTML is identical for everyone; state arrives via /api/me)
+  var auth = { csrf: null };
+  function post(url, data) {
+    return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': auth.csrf || '' }, body: JSON.stringify(data) }).catch(function () {});
+  }
+  function hasSession() { return document.cookie.indexOf('cmcsid=') >= 0; }
+
   // ---- watchlist
   var wl = store.get('watchlist', []);
   function paintStars() { $$('.star').forEach(function (b) { var on = wl.indexOf(b.dataset.coin) >= 0; b.classList.toggle('on', on); b.textContent = on ? '★' : '☆'; }); }
@@ -65,6 +72,7 @@
     if (i >= 0) wl.splice(i, 1); else wl.push(id);
     store.set('watchlist', wl);
     paintStars();
+    if (auth.csrf) post('/api/watchlist/', { coin: id, on: i < 0 });
   });
   paintStars();
   var wbox = $('#watchlist');
@@ -169,4 +177,62 @@
       c.chart.applyOptions({ layout: { textColor: css('--muted') }, grid: { horzLines: { color: css('--line') } } });
     });
   };
+
+  // ---- logged-in UI + server-synced watchlist (only when a session cookie exists)
+  if (hasSession()) {
+    fetch('/api/me/', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (m) {
+      if (!m.loggedIn) return;
+      auth.csrf = m.csrf;
+      $$('[data-auth=guest]').forEach(function (n) { n.hidden = true; });
+      $$('[data-auth=user]').forEach(function (n) { n.hidden = false; });
+      var changed = false;
+      m.watchlist.forEach(function (s) { if (wl.indexOf(s) < 0) { wl.push(s); changed = true; } });
+      wl.forEach(function (s) { if (m.watchlist.indexOf(s) < 0) post('/api/watchlist/', { coin: s, on: true }); });
+      store.set('watchlist', wl); paintStars();
+      if (changed && wbox) location.reload();
+    }).catch(function () {});
+  }
+
+  // ---- ads: slots are empty containers in cached HTML; filled here so impressions are counted per view
+  $$('.ad-slot').forEach(function (el) {
+    fetch('/api/ad/?slot=' + encodeURIComponent(el.dataset.slot), { credentials: 'omit' }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.html) { el.remove(); return; }
+      el.innerHTML = d.html;
+      $$('script', el).forEach(function (o) { var n = document.createElement('script'); for (var i = 0; i < o.attributes.length; i++) n.setAttribute(o.attributes[i].name, o.attributes[i].value); n.text = o.text; o.replaceWith(n); });
+    }).catch(function () { el.remove(); });
+  });
+
+  // ---- Google Analytics, only after consent
+  var gaMeta = document.querySelector('meta[name=cmc-ga]');
+  if (gaMeta) {
+    var banner = $('#cookie-banner'), consent = store.get('ga_consent', null);
+    var loadGA = function () {
+      var id = gaMeta.content; window.dataLayer = window.dataLayer || [];
+      window.gtag = function () { dataLayer.push(arguments); }; gtag('js', new Date()); gtag('config', id, { anonymize_ip: true });
+      var sc = document.createElement('script'); sc.async = true; sc.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id); document.head.appendChild(sc);
+    };
+    if (consent === 'yes') loadGA(); else if (consent === null && banner) banner.hidden = false;
+    if (banner) banner.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-cookie]'); if (!b) return;
+      store.set('ga_consent', b.dataset.cookie); banner.hidden = true; if (b.dataset.cookie === 'yes') loadGA();
+    });
+  }
+
+  // ---- Core Web Vitals field data (tiny, sampled, no libraries)
+  try {
+    if ('PerformanceObserver' in window && Math.random() < 0.25) {
+      var vit = {}, sent = false;
+      var po = function (type, cb) { try { new PerformanceObserver(function (l) { l.getEntries().forEach(cb); }).observe({ type: type, buffered: true }); } catch (e) {} };
+      po('largest-contentful-paint', function (en) { vit.LCP = en.startTime; });
+      po('layout-shift', function (en) { if (!en.hadRecentInput) vit.CLS = (vit.CLS || 0) + en.value; });
+      po('event', function (en) { if (en.interactionId) vit.INP = Math.max(vit.INP || 0, en.duration); });
+      var nav = performance.getEntriesByType('navigation')[0]; if (nav) vit.TTFB = nav.responseStart;
+      var flush = function () {
+        if (sent) return; sent = true;
+        Object.keys(vit).forEach(function (k) { navigator.sendBeacon('/api/vitals/', JSON.stringify({ m: k, v: Math.round(vit[k] * 1000) / 1000, p: location.pathname })); });
+      };
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flush(); });
+      addEventListener('pagehide', flush);
+    }
+  } catch (e) {}
 })();

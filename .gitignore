@@ -4,3 +4,5 @@ storage/logs/*
 !storage/logs/.gitkeep
 app/config.local.php
 .DS_Store
+storage/app.key
+storage/cache/redirects.json

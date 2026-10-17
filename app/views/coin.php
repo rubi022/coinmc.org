@@ -13,12 +13,15 @@ $fiatList = array_intersect(top_fiats(), array_keys(fiats()));
 ?>
 <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Cryptocurrencies</a> › <span><?= e($n) ?> Price</span></nav>
 
+<?php if (($c['risk_flag'] ?? '') === 'warning' || ($c['risk_flag'] ?? '') === 'scam'): ?><div class="notice err"><strong>Risk warning:</strong> <?= e($c['name']) ?> has been flagged by our team as <?= $c['risk_flag'] === 'scam' ? 'a suspected scam' : 'high risk' ?>. Do your own research and never invest more than you can afford to lose.</div><?php endif; ?>
+<?= ad_slot('coin_top') ?>
 <div class="coin-layout">
   <aside class="coin-side">
     <div class="coin-title">
       <?= coin_img($c, 36) ?>
       <h1><?= e($n) ?> <span class="sym"><?= e($s) ?> price</span></h1>
       <?php if ($c['rank_no']): ?><span class="badge">#<?= (int)$c['rank_no'] ?></span><?php endif; ?>
+      <?php if (!empty($c['verified'])): ?><span class="badge ok" title="Reviewed by the <?= e(cfg('site_name')) ?> team">✓ Verified</span><?php endif; ?>
       <button class="star big" data-coin="<?= e($c['slug']) ?>" aria-label="Add to watchlist">☆</button>
     </div>
     <div class="coin-price">
@@ -63,6 +66,7 @@ $fiatList = array_intersect(top_fiats(), array_keys(fiats()));
   </aside>
 
   <div class="coin-main">
+    <?= ad_slot('coin_sidebar') ?>
     <section class="card chart-card">
       <div class="chart-head">
         <h2><?= e($n) ?> to USD Chart</h2>

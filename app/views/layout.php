@@ -2,7 +2,8 @@
 $g = global_stats();
 $site = cfg('site_name');
 $canon = array_key_exists('canonical', $seo) ? $seo['canonical'] : null;
-$canonAbs = $canon ? (strpos($canon, '?') !== false ? base_url() . $canon : abs_url($canon)) : null;
+$canonAbs = $canon ? (preg_match('~^https?://~', $canon) ? $canon : (strpos($canon, '?') !== false ? base_url() . $canon : abs_url($canon))) : null;
+$ga4 = setting('ga4_id'); $headHtml = setting('head_html'); $gscV = setting('gsc_verification'); $bingV = setting('bing_verification');
 $ogImage = $seo['og_image'] ?? abs_url('/assets/img/og.png');
 $footerCoins = rows('SELECT slug, name, symbol FROM coins WHERE rank_no IS NOT NULL ORDER BY rank_no LIMIT 12');
 ?><!doctype html>
@@ -31,13 +32,19 @@ $footerCoins = rows('SELECT slug, name, symbol FROM coins WHERE rank_no IS NOT N
 <meta name="twitter:title" content="<?= e($seo['title']) ?>">
 <meta name="twitter:description" content="<?= e(mb_substr($seo['description'] ?? '', 0, 200)) ?>">
 <meta name="theme-color" content="#3861fb">
+<?php if ($gscV): ?><meta name="google-site-verification" content="<?= e($gscV) ?>">
+<?php endif; if ($bingV): ?><meta name="msvalidate.01" content="<?= e($bingV) ?>">
+<?php endif; if ($ga4): ?><meta name="cmc-ga" content="<?= e($ga4) ?>">
+<?php endif; ?>
+<meta name="cmc-ptype" content="<?= e(path_type(strtolower((string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH)))) ?>">
 <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://coin-images.coingecko.com" crossorigin>
-<link rel="stylesheet" href="/assets/css/app.css?v=3">
+<link rel="stylesheet" href="/assets/css/app.css?v=4">
 <script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <?php foreach ($seo['ld'] ?? [] as $ld): ?>
 <script type="application/ld+json"><?= json_encode($ld, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
 <?php endforeach; ?>
+<?php if ($headHtml) echo $headHtml, "\n"; ?>
 </head>
 <body>
 <div class="topbar">
@@ -62,6 +69,7 @@ $footerCoins = rows('SELECT slug, name, symbol FROM coins WHERE rank_no IS NOT N
       <a href="/new/">New</a>
       <a href="/convert/">Converter</a>
       <a href="/charts/">Charts</a>
+      <a href="/news/">News</a>
     </nav>
     <div class="hdr-right">
       <form class="search" action="/search/" method="get" role="search">
@@ -69,6 +77,8 @@ $footerCoins = rows('SELECT slug, name, symbol FROM coins WHERE rank_no IS NOT N
         <div class="search-pop" hidden></div>
       </form>
       <a class="icon-btn" href="/watchlist/" title="Watchlist" aria-label="Watchlist">★</a>
+      <a class="btn sm" href="/login/" data-auth="guest">Log in</a>
+      <a class="btn sm" href="/account/" data-auth="user" hidden>Account</a>
       <button class="icon-btn theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
     </div>
   </div>
@@ -93,12 +103,13 @@ $footerCoins = rows('SELECT slug, name, symbol FROM coins WHERE rank_no IS NOT N
     </ul></div>
     <div><h4><?= e($site) ?></h4><ul>
       <li><a href="/about/">About</a></li><li><a href="/methodology/">Methodology</a></li><li><a href="/categories/">Categories</a></li>
-      <li><a href="/terms/">Terms</a></li><li><a href="/privacy/">Privacy</a></li><li><a href="/disclaimer/">Disclaimer</a></li>
+      <li><a href="/terms/">Terms</a></li><li><a href="/privacy/">Privacy</a></li><li><a href="/disclaimer/">Disclaimer</a></li><li><a href="/advertising-disclosure/">Advertising</a></li><li><a href="/news/">News</a></li>
     </ul></div>
   </div>
   <div class="wrap small muted ftr-bottom">© <?= date('Y') ?> <?= e($site) ?>. Data is provided for information only and is not investment advice.</div>
 </footer>
 <?php if (!empty($seo['charts'])): ?><script src="/assets/js/vendor/lightweight-charts.standalone.production.js" defer></script><?php endif; ?>
-<script src="/assets/js/app.js?v=3" defer></script>
+<?php if ($ga4): ?><div id="cookie-banner" class="cookie" hidden><span>We use cookies for analytics (Google Analytics) to improve <?= e($site) ?>. <a href="/privacy/">Privacy</a></span><button class="btn sm" data-cookie="yes">Accept</button><button class="btn sm ghost" data-cookie="no">Decline</button></div><?php endif; ?>
+<script src="/assets/js/app.js?v=4" defer></script>
 </body>
 </html>

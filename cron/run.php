@@ -13,20 +13,7 @@ require __DIR__ . '/../app/bootstrap.php';
 require __DIR__ . '/tasks.php';
 set_time_limit(0);
 
-// task => minimum minutes between runs
-$schedule = [
-    'fiat'       => 60,
-    'markets'    => 5,
-    'tickers'    => 2,
-    'global'     => 10,
-    'trending'   => 15,
-    'categories' => 60,
-    'exchanges'  => 360,
-    'meta'       => 10,
-    'history'    => 5,
-    'hourly'     => 60,
-    'cache_clear'=> 60,
-];
+$schedule = cron_schedule();
 
 $arg = $argv[1] ?? 'schedule';
 
@@ -38,9 +25,12 @@ function run_task(string $t): void
     try {
         ('task_' . $t)();
         kv_set("last_run_$t", time());
+        q('DELETE FROM kv WHERE k = ?', ["last_err_$t"]);
     } catch (Throwable $e) {
         log_msg('sync', "$t FAILED: " . $e->getMessage() . ' @' . basename($e->getFile()) . ':' . $e->getLine());
+        kv_set("last_err_$t", gmdate('Y-m-d H:i:s') . ' ' . mb_substr($e->getMessage(), 0, 200));
     }
+    kv_set("last_dur_$t", round(microtime(true) - $t0, 1));
     log_msg('sync', sprintf('%s done in %.1fs', $t, microtime(true) - $t0));
     flock($lock, LOCK_UN);
 }
@@ -55,7 +45,7 @@ if ($arg === 'schedule') {
     }
 } elseif ($arg === 'all') {
     // Order matters: fiat + markets first, then categories (for meta mapping), tickers needs coin prices.
-    foreach (['fiat', 'markets', 'global', 'categories', 'exchanges', 'trending', 'tickers', 'meta', 'history', 'hourly'] as $t) run_task($t);
+    foreach (['fiat', 'markets', 'global', 'categories', 'exchanges', 'trending', 'tickers', 'meta', 'history', 'hourly', 'analytics_rollup', 'alerts'] as $t) run_task($t);
 } elseif (isset($schedule[$arg])) {
     run_task($arg);
 } else {

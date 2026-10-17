@@ -9,6 +9,16 @@ require_once APP_DIR . '/sources/Exchanges.php';
 const STABLES = ['USDT', 'USDC', 'FDUSD', 'TUSD', 'BUSD', 'DAI', 'USD', 'USDE', 'PYUSD', 'USDP'];
 const QUOTE_CG = ['BTC' => 'bitcoin', 'ETH' => 'ethereum', 'BNB' => 'binancecoin', 'SOL' => 'solana', 'XRP' => 'ripple', 'DOGE' => 'dogecoin', 'TRX' => 'tron'];
 
+/** task => default minimum minutes between runs. Admin → Sync tasks can override (setting cron_intervals, JSON). */
+function cron_schedule(): array
+{
+    $d = ['fiat' => 60, 'markets' => 5, 'tickers' => 2, 'global' => 10, 'trending' => 15, 'categories' => 60, 'exchanges' => 360, 'meta' => 10, 'history' => 5, 'hourly' => 60,
+          'cache_clear' => 60, 'analytics_rollup' => 15, 'alerts' => 5, 'gsc' => 720, 'ga4' => 360, 'purge_accounts' => 360, 'seo_audit' => 10080, 'digest' => 10080];
+    $o = json_decode((string)setting('cron_intervals', ''), true);
+    if (is_array($o)) foreach ($o as $k => $v) if (isset($d[$k]) && (int)$v >= 1 && (int)$v <= 10080) $d[$k] = (int)$v;
+    return $d;
+}
+
 function now_sql(): string { return gmdate('Y-m-d H:i:s'); }
 
 function sig($v, int $s = 6)
@@ -58,7 +68,8 @@ function task_markets(): void
         $total += count($batch);
         if (count($data) < 250) break;
     }
-    if ($total >= 200) q('UPDATE coins SET rank_no = NULL WHERE updated_at < ?', [$runStart]);
+    if ($total >= 200) q("UPDATE coins SET rank_no = NULL WHERE updated_at < ? AND listing_source <> 'manual'", [$runStart]);
+    task_overrides();
     log_msg('sync', "markets: $total coins");
 }
 
@@ -338,4 +349,191 @@ function task_cache_clear(): void
     $n = 0;
     foreach (glob(STORAGE . '/cache/*.html') ?: [] as $f) if (filemtime($f) < time() - 3600) { @unlink($f); $n++; }
     log_msg('sync', "cache: removed $n stale files");
+}
+
+// ================================================================ admin-panel tasks
+require_once APP_DIR . '/sources/Google.php';
+
+/** Re-applies admin manual overrides after every market sync so the sync never silently undoes an admin edit. */
+function task_overrides(): void
+{
+    $allowed = ['name', 'image', 'description', 'homepage', 'circulating_supply', 'total_supply', 'max_supply', 'price', 'market_cap', 'volume_24h', 'rank_no'];
+    $n = 0;
+    foreach (rows('SELECT coin_id, field, value FROM coin_overrides') as $o) {
+        if (!in_array($o['field'], $allowed, true)) continue;
+        $v = $o['value'] === '' ? null : $o['value'];
+        q("UPDATE coins SET `{$o['field']}` = ? WHERE id = ?", [$v, $o['coin_id']]);
+        $n++;
+    }
+    if ($n) log_msg('sync', "overrides applied: $n");
+}
+
+/** Daily rollups, retention purge. Safe to re-run: rebuilds the last 3 days from raw pageviews. */
+function task_analytics_rollup(): void
+{
+    traffic_rollup(3);
+    $ret = max(7, (int)cfg('analytics_retention_days', 90));
+    $n = q('DELETE FROM pageviews WHERE ts < UTC_TIMESTAMP() - INTERVAL ' . $ret . ' DAY LIMIT 50000')->rowCount();
+    q('DELETE FROM visitors WHERE last_ts < ?', [time() - 2 * 86400]);
+    q('DELETE FROM ad_freq WHERE day < UTC_DATE() - INTERVAL 3 DAY');
+    q('DELETE FROM cwv WHERE ts < UTC_TIMESTAMP() - INTERVAL 90 DAY LIMIT 50000');
+    q('DELETE FROM api_log WHERE ts < UTC_TIMESTAMP() - INTERVAL 14 DAY LIMIT 50000');
+    q('DELETE FROM login_history WHERE created_at < UTC_TIMESTAMP() - INTERVAL 180 DAY');
+    q('DELETE FROM user_tokens WHERE expires_at < UTC_TIMESTAMP() - INTERVAL 1 DAY');
+    log_msg('sync', "rollup done, purged $n old pageviews");
+}
+
+/** Permanently deletes accounts whose 7-day deletion grace period elapsed. */
+function task_purge_accounts(): void
+{
+    $ids = array_column(rows("SELECT id FROM users WHERE deletion_requested_at IS NOT NULL AND deletion_requested_at < UTC_TIMESTAMP() - INTERVAL 7 DAY AND role = 'user'"), 'id');
+    foreach ($ids as $id) {
+        foreach (['user_watchlist', 'user_tokens'] as $t) q("DELETE FROM $t WHERE user_id = ?", [$id]);
+        q('UPDATE login_history SET user_id = NULL, email = NULL, ip = NULL, user_agent = NULL WHERE user_id = ?', [$id]);
+        q('DELETE FROM users WHERE id = ?', [$id]);
+        audit('user.purged', 'user', $id);
+    }
+    if ($ids) log_msg('sync', 'accounts purged: ' . count($ids));
+}
+
+function task_gsc(): void
+{
+    if (!Google::configured('gsc')) return;
+    $end = gmdate('Y-m-d', time() - 2 * 86400);                          // GSC data lags ~2 days
+    $last = kv_get('gsc_last_day');
+    $start = $last ? gmdate('Y-m-d', strtotime($last . ' -2 days')) : gmdate('Y-m-d', time() - 90 * 86400);
+    if ($start > $end) return;
+    $base = ['startDate' => $start, 'endDate' => $end, 'rowLimit' => 25000, 'dataState' => 'final'];
+    $tot = Google::gscQuery($base + ['dimensions' => ['date']]);
+    if ($tot === null) { alert_raise('gsc_sync', 'gsc', 'warning', 'Search Console sync failed. Check the service account has access to the property.'); return; }
+    foreach ($tot as $r) q('REPLACE INTO gsc_totals (day, clicks, impressions, ctr, position) VALUES (?,?,?,?,?)', [$r['keys'][0], $r['clicks'], $r['impressions'], $r['ctr'], $r['position']]);
+    foreach ([['query', 'gsc_queries', 'query'], ['page', 'gsc_pages', 'page']] as [$dim, $table, $col]) {
+        $rows = Google::gscQuery($base + ['dimensions' => ['date', $dim], 'rowLimit' => 5000]) ?: [];
+        foreach ($rows as $r) q("REPLACE INTO $table (day, `$col`, clicks, impressions, position) VALUES (?,?,?,?,?)", [$r['keys'][0], mb_substr($r['keys'][1], 0, $dim === 'query' ? 160 : 200), $r['clicks'], $r['impressions'], $r['position']]);
+    }
+    foreach (Google::gscQuery($base + ['dimensions' => ['date', 'country'], 'rowLimit' => 5000]) ?: [] as $r)
+        q('REPLACE INTO gsc_countries (day, country, clicks, impressions) VALUES (?,?,?,?)', [$r['keys'][0], strtoupper(substr($r['keys'][1], 0, 3)), $r['clicks'], $r['impressions']]);
+    q('DELETE FROM gsc_queries WHERE day < UTC_DATE() - INTERVAL 120 DAY'); q('DELETE FROM gsc_pages WHERE day < UTC_DATE() - INTERVAL 120 DAY');
+    kv_set('gsc_last_day', $end);
+    alert_resolve('gsc_sync', 'gsc');
+    log_msg('sync', 'gsc: ' . count($tot) . ' days');
+}
+
+function task_ga4(): void
+{
+    if (!Google::configured('ga4')) return;
+    $rows = Google::ga4Report(['dateRanges' => [['startDate' => '30daysAgo', 'endDate' => 'today']], 'dimensions' => [['name' => 'date']],
+        'metrics' => [['name' => 'activeUsers'], ['name' => 'sessions'], ['name' => 'screenPageViews'], ['name' => 'engagedSessions']]]);
+    if ($rows === null) { alert_raise('ga4_sync', 'ga4', 'warning', 'Google Analytics sync failed. Check the service account has Viewer access to the GA4 property.'); return; }
+    foreach ($rows as $r) {
+        $d = $r['dimensionValues'][0]['value']; $m = array_column($r['metricValues'], 'value');
+        q('REPLACE INTO ga_daily (day, users, sessions, pageviews, engaged_sessions) VALUES (?,?,?,?,?)', [substr($d, 0, 4) . '-' . substr($d, 4, 2) . '-' . substr($d, 6, 2), $m[0], $m[1], $m[2], $m[3]]);
+    }
+    alert_resolve('ga4_sync', 'ga4');
+    log_msg('sync', 'ga4: ' . count($rows) . ' days');
+}
+
+/** Weekly automated technical SEO audit; raises an alert when critical issues are found. */
+function task_seo_audit(): void
+{
+    require_once APP_DIR . '/lib/seoaudit.php';
+    $r = seo_audit_run(120);
+    $c = $r['summary']['critical'];
+    if ($c > 0) alert_raise('seo_audit', '', 'warning', "Automated SEO audit found $c critical issue(s). Open SEO Center → Site audit.");
+    else alert_resolve('seo_audit', '');
+    log_msg('sync', "seo audit: {$r['summary']['critical']} critical, {$r['summary']['warning']} warnings");
+}
+
+// ---------------------------------------------------------------- alerts
+function alert_raise(string $type, string $key, string $sev, string $msg): void
+{
+    $open = row('SELECT id, message FROM alerts WHERE type = ? AND dedupe_key = ? AND resolved_at IS NULL', [$type, $key]);
+    if ($open) { q('UPDATE alerts SET last_seen_at = UTC_TIMESTAMP(), message = ?, severity = ? WHERE id = ?', [$msg, $sev, $open['id']]); return; }
+    q('INSERT INTO alerts (severity, type, dedupe_key, message, last_seen_at) VALUES (?,?,?,?,UTC_TIMESTAMP())', [$sev, $type, $key, $msg]);
+}
+
+function alert_resolve(string $type, string $key = ''): void
+{
+    q('UPDATE alerts SET resolved_at = UTC_TIMESTAMP() WHERE type = ? AND dedupe_key = ? AND resolved_at IS NULL', [$type, $key]);
+}
+
+/** Rule engine: runs every few minutes; raises, refreshes and auto-resolves alerts, then notifies on new ones. */
+function task_alerts(): void
+{
+    $check = function (string $type, string $key, bool $firing, string $sev, string $msg) {
+        if ($firing) alert_raise($type, $key, $sev, $msg); else alert_resolve($type, $key);
+    };
+    // data freshness
+    foreach (['markets' => 20, 'tickers' => 15, 'global' => 40] as $t => $mins) {
+        $last = (int)kv_get("last_run_$t", 0);
+        $check('stale_data', $t, $last > 0 && time() - $last > $mins * 60, 'critical', "Data task '$t' has not run successfully for over $mins minutes (last: " . ($last ? gmdate('H:i', $last) . ' UTC' : 'never') . ').');
+    }
+    // external API health (last 30 min)
+    foreach (rows("SELECT host, COUNT(*) n, SUM(ok = 0) bad FROM api_log WHERE ts > UTC_TIMESTAMP() - INTERVAL 30 MINUTE GROUP BY host") as $h) {
+        $check('api_errors', $h['host'], $h['n'] >= 5 && $h['bad'] / $h['n'] > 0.5, 'warning', "{$h['host']}: {$h['bad']} of {$h['n']} requests failed in the last 30 minutes.");
+    }
+    // server errors / 404 spikes (last hour)
+    $p = row("SELECT SUM(status >= 500) e5, SUM(status = 404) e4, COUNT(*) n FROM pageviews WHERE ts > UTC_TIMESTAMP() - INTERVAL 1 HOUR AND is_bot = 0");
+    $check('errors_5xx', '', (int)$p['e5'] >= 5, 'critical', (int)$p['e5'] . ' server errors (5xx) served to visitors in the last hour.');
+    $check('errors_404', '', (int)$p['n'] >= 50 && $p['e4'] / max(1, $p['n']) > 0.15, 'warning', 'More than 15% of page views in the last hour were 404 — check the SEO Center → 404 monitor.');
+    // traffic anomaly: yesterday vs average of previous 7 days
+    $y = row('SELECT views, googlebot FROM traffic_daily WHERE day = UTC_DATE() - INTERVAL 1 DAY');
+    $avg = row('SELECT AVG(views) v, AVG(googlebot) g, COUNT(*) n FROM traffic_daily WHERE day BETWEEN UTC_DATE() - INTERVAL 8 DAY AND UTC_DATE() - INTERVAL 2 DAY');
+    if ($y && $avg && (int)$avg['n'] >= 5) {
+        $check('traffic_drop', '', $avg['v'] > 200 && $y['views'] < $avg['v'] * 0.6, 'warning', 'Yesterday’s page views (' . (int)$y['views'] . ') were over 40% below the 7-day average (' . (int)$avg['v'] . ').');
+        $check('googlebot_drop', '', $avg['g'] > 50 && $y['googlebot'] < $avg['g'] * 0.4, 'warning', 'Googlebot crawl activity dropped by over 60% versus the 7-day average — check robots.txt, server errors and Search Console.');
+    }
+    // workflow
+    $pend = (int)val("SELECT COUNT(*) FROM ad_campaigns WHERE status = 'pending'");
+    $check('ads_pending', '', $pend > 0, 'info', "$pend ad campaign(s) waiting for approval.");
+    $pc = (int)val("SELECT COUNT(*) FROM coins WHERE status = 'pending'");
+    $check('coins_pending', '', $pc > 0, 'info', "$pc coin listing(s) waiting for review.");
+    $ending = rows("SELECT id, name FROM ad_campaigns WHERE status = 'approved' AND budget > 0 AND spent >= budget * 0.9");
+    foreach ($ending as $c) alert_raise('ad_budget', (string)$c['id'], 'info', "Campaign “{$c['name']}” has used over 90% of its budget.");
+    // disk
+    $free = @disk_free_space(STORAGE); $tot = @disk_total_space(STORAGE);
+    if ($free && $tot) $check('disk_low', '', $free / $tot < 0.1, 'critical', 'Server disk is over 90% full (' . round($free / 1e9, 1) . ' GB free).');
+
+    // notify (Slack-compatible webhook and/or email) for new warning/critical alerts
+    $new = rows("SELECT id, severity, message FROM alerts WHERE notified = 0 AND resolved_at IS NULL AND severity IN ('warning','critical')");
+    if (!$new) return;
+    $text = cfg('site_name') . " alerts:\n" . implode("\n", array_map(fn($a) => '• [' . strtoupper($a['severity']) . '] ' . $a['message'], $new));
+    $hook = setting('alert_webhook');
+    if ($hook && preg_match('~^https://~', $hook)) {
+        $ch = curl_init($hook);
+        curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => json_encode(['text' => $text]), CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10]);
+        curl_exec($ch); curl_close($ch);
+    }
+    if ($to = setting('alert_email')) send_mail($to, '[' . cfg('site_name') . '] ' . count($new) . ' new alert(s)', $text);
+    foreach ($new as $a) q('UPDATE alerts SET notified = 1 WHERE id = ?', [$a['id']]);
+}
+
+/** Weekly plain-text digest to Settings → Notifications → digest email. Returns the text (sent only when an address is configured). */
+function digest_text(): string
+{
+    traffic_rollup(8);
+    $a = row('SELECT COALESCE(SUM(views),0) v, COALESCE(SUM(visitors),0) u, COALESCE(SUM(sessions),0) s, COALESCE(SUM(organic_sessions),0) o, COALESCE(SUM(googlebot),0) g FROM traffic_daily WHERE day BETWEEN UTC_DATE() - INTERVAL 7 DAY AND UTC_DATE() - INTERVAL 1 DAY');
+    $b = row('SELECT COALESCE(SUM(views),0) v, COALESCE(SUM(sessions),0) s, COALESCE(SUM(organic_sessions),0) o FROM traffic_daily WHERE day BETWEEN UTC_DATE() - INTERVAL 14 DAY AND UTC_DATE() - INTERVAL 8 DAY');
+    $d = fn($x, $y) => $y > 0 ? sprintf('%+.1f%%', ($x - $y) / $y * 100) : 'n/a';
+    $t = cfg('site_name') . " weekly digest\n" . str_repeat('=', 32) . "\n\n";
+    $t .= "TRAFFIC (last 7 full days vs previous 7)\n  Page views: {$a['v']} ({$d($a['v'], $b['v'])})\n  Sessions:   {$a['s']} ({$d($a['s'], $b['s'])})\n  Organic:    {$a['o']} ({$d($a['o'], $b['o'])})\n  Googlebot hits: {$a['g']}\n\n";
+    $top = rows('SELECT path, COUNT(*) n FROM pageviews WHERE is_bot = 0 AND day BETWEEN UTC_DATE() - INTERVAL 7 DAY AND UTC_DATE() - INTERVAL 1 DAY GROUP BY path ORDER BY n DESC LIMIT 5');
+    $t .= "TOP PAGES\n" . implode("\n", array_map(fn($r) => "  {$r['n']}  {$r['path']}", $top)) . "\n\n";
+    $g = row('SELECT COALESCE(SUM(clicks),0) c, COALESCE(SUM(impressions),0) i FROM gsc_totals WHERE day >= UTC_DATE() - INTERVAL 9 DAY');
+    if ($g['i']) $t .= "SEARCH CONSOLE (last ~7 days)\n  Clicks: {$g['c']}  Impressions: {$g['i']}\n\n";
+    $su = (int)val('SELECT COUNT(*) FROM users WHERE created_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY');
+    $inc = (float)val("SELECT COALESCE(SUM(amount),0) FROM ledger WHERE type='income' AND day >= UTC_DATE() - INTERVAL 7 DAY");
+    $ex = (float)val("SELECT COALESCE(SUM(amount),0) FROM ledger WHERE type='expense' AND day >= UTC_DATE() - INTERVAL 7 DAY");
+    $t .= "BUSINESS\n  New members: $su\n  Income recorded: $" . number_format($inc, 2) . "\n  Expenses recorded: $" . number_format($ex, 2) . "\n\n";
+    $al = rows("SELECT severity, message FROM alerts WHERE resolved_at IS NULL ORDER BY id DESC LIMIT 8");
+    $t .= $al ? "OPEN ALERTS\n" . implode("\n", array_map(fn($r) => "  [{$r['severity']}] {$r['message']}", $al)) . "\n\n" : "No open alerts.\n\n";
+    return $t . 'Open the control center: ' . base_url() . "/admin/\n";
+}
+
+function task_digest(): void
+{
+    $to = setting('digest_email');
+    if (!$to) return;
+    send_mail($to, cfg('site_name') . ' weekly digest', digest_text());
+    log_msg('sync', 'digest sent');
 }

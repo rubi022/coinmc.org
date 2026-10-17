@@ -11,6 +11,7 @@ $mini = function (string $title, string $href, array $list, string $field = 'cha
     </ol>
   </div>
 <?php }; ?>
+<?= ad_slot('home_top') ?>
 <section class="intro">
   <h1><?= $page > 1 ? 'Cryptocurrency Prices by Market Cap – Page ' . $page : 'Today’s Cryptocurrency Prices by Market Cap' ?></h1>
   <p class="lead">The global crypto market cap is <strong><?= fmt_big($mc) ?></strong><?php if ($chg !== null): ?>, a <span class="<?= up_down($chg) ?>"><?= pct_raw($chg) ?> <?= $chg >= 0 ? 'increase' : 'decrease' ?></span> over the last day<?php endif; ?>.

@@ -19,7 +19,29 @@
   <h2>Update frequency</h2>
   <p>Exchange prices: every 2 minutes · Rankings and supply: every 5 minutes · Hourly chart data: hourly · Daily history: daily.</p>
 <?php elseif ($p === 'privacy'): ?>
-  <p><?= $site ?> does not require an account. Your watchlist and theme preference are stored only in your own browser (localStorage) and never sent to our servers. Standard server logs (IP address, user agent, requested URL) are kept for security and are deleted after 30 days. If we add analytics or advertising in the future, this policy will be updated.</p>
+  <p>This policy explains what <?= $site ?> collects and why.</p>
+  <h2>Browsing</h2>
+  <p>We run privacy-friendly first-party analytics: page views, referrer, approximate country (from our CDN), device type and a pseudonymous visitor identifier derived from a salted hash of your IP address and browser. No analytics cookie is set, raw IPs are not stored with page views, and detailed records are deleted after a limited retention period. Standard server logs are kept briefly for security.</p>
+  <h2>Accounts</h2>
+  <p>If you register we store your email address, an optional name, a salted password hash, your watchlist, newsletter preference and sign-in history (time, IP, result) for security. You can download all of it or delete your account from the Account page; deletion removes your data after a 7-day grace period. Without an account your watchlist stays in your own browser.</p>
+  <h2>Cookies</h2>
+  <p>We set one strictly-necessary session cookie when you log in or register. If Google Analytics is enabled you will be asked for consent first and nothing is loaded until you accept.</p>
+  <h2>Advertising &amp; affiliate links</h2>
+  <p>Sponsored placements are labeled and are chosen by page, device and country, not by profiling you. Clicking a sponsored or affiliate link sends you to a third party whose own policy applies. See our <a href="/advertising-disclosure/">advertising disclosure</a>.</p>
+  <h2>Contact</h2>
+  <p>For privacy requests use the contact address on the About page.</p>
+<?php elseif ($p === 'advertising-disclosure'): ?>
+  <p><?= $site ?> earns revenue from advertising, sponsored placements and affiliate links. This page explains how that works so you can judge it for yourself.</p>
+  <h2>Sponsored placements</h2>
+  <p>Anything marked <strong>Sponsored</strong> or <strong>Sponsored listing</strong> is a paid placement. Sponsored items are reviewed before they run, can never be styled to look like organic rankings, and do not change a coin’s rank, price or any market data.</p>
+  <h2>Sponsored articles</h2>
+  <p>Articles paid for by a project are labeled as sponsored at the top of the page and carry the sponsor’s name.</p>
+  <h2>Affiliate links</h2>
+  <p>Some links to exchanges and services are affiliate links (they pass through a <code>/go/</code> address). If you sign up we may receive a commission at no extra cost to you. Affiliate relationships do not influence our rankings or data.</p>
+  <h2>Not advice</h2>
+  <p>Sponsored content is not investment advice or an endorsement. Cryptoassets are volatile and you can lose all of your money.</p>
+  <h2>Report an ad</h2>
+  <p>If a sponsored placement looks misleading or harmful, tell us via the contact address on the About page and we will review it promptly.</p>
 <?php elseif ($p === 'terms'): ?>
   <p>All data on <?= $site ?> is provided “as is”, for informational purposes only, without warranty of accuracy or completeness. You may reference and link to our pages and use downloaded historical data for personal and research use with attribution to <?= $site ?>. Automated bulk scraping of the site is not permitted.</p>
 <?php else: ?>

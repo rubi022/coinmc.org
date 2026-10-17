@@ -116,3 +116,28 @@ public/                 web root (index.php, router.php, assets)
 3. Learn/glossary hub (`/learn/what-is-market-cap/` …) for topical authority, linking into coin pages.
 4. Expand coin coverage beyond 1,000 (`max_coins`) once a CoinGecko key is in place.
 5. Embeddable price widgets for other sites → backlinks.
+
+---
+
+## Admin panel & accounts
+
+**Setup**
+```
+php bin/install.php                         # creates/migrates all tables (idempotent)
+php bin/create_admin.php you@example.com    # prompts for a password; creates a super_admin
+```
+Open `/admin/`. Staff must enable 2FA (setting *Require 2FA for staff*, on by default): sign in, go to `/account/security/`, enter the setup key in an authenticator app, confirm a code, and save the recovery codes.
+
+**Cron** (every minute): `php cron/run.php` — runs due tasks (market sync, overrides, analytics rollup, alerts, GSC/GA4, weekly SEO audit, account purge, digest).
+
+**Modules**: Dashboard · Analytics (own cookie-less tracking, CWV field data) · Crypto (coins, exchanges, verified/risk flags, manual listings) · Market data ops · SEO (metadata, redirects, robots.txt, 404 monitor, audit, Search Console) · Advertising (approval workflow, labeled "Sponsored" slots) · Affiliates · Finance ledger · Content (CMS) · Users & roles · Alerts · Reports · Security/Audit/Settings.
+
+**Roles**: super_admin, seo_manager, content_editor, ads_manager, data_ops, finance_manager, moderator, user.
+
+**Google integrations** (Settings): paste a service-account JSON (stored AES-256-GCM encrypted; key in `storage/app.key`, back it up, never commit it), add the account's email as a user on the Search Console property / GA4 property, then set *gsc_site* (e.g. `sc-domain:coinmc.org`) and *ga4_property*.
+
+**Advertising rules built in**: every paid placement shows a non-removable "Sponsored" label with a disclosure link; campaigns need a verified advertiser, a policy confirmation and a second approver (when more than one approver exists); editing an approved creative/URL sends it back to review; global kill switch in Settings.
+
+**Security notes**: CSRF on all POSTs, login throttling, optional admin IP allow-list, audit log with secret masking, sessions invalidated on password change/suspension.
+
+**Not included yet**: competitor intelligence, email marketing, support tickets, API-key billing, backlink monitoring (needs third-party data).

@@ -25,6 +25,15 @@ $config = [
     // Binance blocks US IPs on api.binance.com; the public market-data mirror works everywhere.
     'binance_hosts' => ['https://data-api.binance.vision', 'https://api.binance.com', 'https://api.binance.us'],
 
+    // --- accounts / mail
+    'trusted_proxy' => false,           // true behind Cloudflare / a load balancer (trusts CF-Connecting-IP, X-Forwarded-*)
+    'mail_from'     => '',              // e.g. 'noreply@coinmc.org' (defaults to noreply@<site host>)
+    'smtp' => ['host' => '', 'port' => 587, 'user' => '', 'pass' => '', 'secure' => 'tls'], // secure: tls | ssl | none
+
+    // --- analytics (first-party, cookie-less)
+    'analytics'                 => true,
+    'analytics_retention_days'  => 90,
+
     'cache_enabled' => true,
     'cache_ttl'     => 60,              // seconds of full-page HTML cache
     'per_page'      => 100,

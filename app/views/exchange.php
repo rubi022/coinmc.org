@@ -1,6 +1,7 @@
 <nav class="crumbs" aria-label="Breadcrumb"><a href="/exchanges/">Exchanges</a> › <span><?= e($x['name']) ?></span></nav>
 <div class="page-head"><?= coin_img(['image' => $x['image'], 'name' => $x['name'], 'symbol' => $x['name']], 36) ?><h1><?= e($x['name']) ?></h1>
   <?php if ($x['trust_score']): ?><span class="score s<?= (int)$x['trust_score'] ?>">Trust <?= (int)$x['trust_score'] ?>/10</span><?php endif; ?></div>
+<?= ad_slot('exchange_top') ?>
 <div class="stat-row">
   <div class="card stat"><div class="muted small">24h Volume</div><div class="big"><?= fmt_big($vol) ?></div></div>
   <div class="card stat"><div class="muted small">Trust Rank</div><div class="big">#<?= e($x['trust_rank'] ?: '—') ?></div></div>

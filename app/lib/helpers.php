@@ -153,8 +153,26 @@ function render(string $view, array $vars = []): string
     return ob_get_clean();
 }
 
+/** Admin-managed overrides (SEO Center > Metadata): title, description, robots, canonical, og image, extra JSON-LD. */
+function seo_apply_overrides(array $seo): array
+{
+    try {
+        $paths = [strtolower(path_norm((string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH)))];
+        if (!empty($seo['canonical']) && !preg_match('~^https?://~', $seo['canonical'])) $paths[] = strtolower(path_norm((string)parse_url($seo['canonical'], PHP_URL_PATH)));
+        $paths = array_values(array_unique($paths));
+        $ph = implode(',', array_fill(0, count($paths), '?'));
+        $o = row("SELECT * FROM seo_meta WHERE path IN ($ph) LIMIT 1", $paths);
+        if (!$o) return $seo;
+        foreach (['title', 'description', 'canonical', 'og_image'] as $k) if ($o[$k] !== null && $o[$k] !== '') $seo[$k] = $o[$k];
+        if ($o['robots']) $seo['robots'] = $o['robots'];
+        if ($o['extra_schema'] && ($j = json_decode($o['extra_schema'], true)) && is_array($j)) $seo['ld'][] = $j;
+    } catch (Throwable $e) { /* table missing before migration: ignore */ }
+    return $seo;
+}
+
 function page(string $view, array $vars, array $seo): string
 {
+    $seo = seo_apply_overrides($seo);
     $vars['seo'] = $seo;
     $content = render($view, $vars);
     return render('layout', ['content' => $content, 'seo' => $seo]);
@@ -162,7 +180,8 @@ function page(string $view, array $vars, array $seo): string
 
 function not_found(string $msg = 'Page not found'): void
 {
-    http_response_code(404);
+    http_response_code(!empty($GLOBALS['__gone']) ? 410 : 404);
+    if (!empty($GLOBALS['__gone'])) $msg = 'This asset has been delisted and is no longer tracked.';
     echo page('404', ['msg' => $msg], ['title' => 'Page Not Found | ' . cfg('site_name'), 'description' => $msg, 'robots' => 'noindex,follow', 'canonical' => null]);
 }
 
